@@ -84,7 +84,6 @@ MySQL을 활용하여 사용자 정보와 채팅방 정보를 관리했습니다
 
 기능이 확장됨에 따라 데이터베이스 구조와 ERD도 함께 수정했습니다.
 
-
 ### 데이터베이스 설계 변화
 
 **3주차 초기 ERD**
@@ -95,6 +94,69 @@ MySQL을 활용하여 사용자 정보와 채팅방 정보를 관리했습니다
 
 ![4~5주차 ERD](erd-week04-05.png)
 
+## 실제 실행 화면
+
+아래 화면들은 Java 채팅 프로젝트를 개발하면서 직접 테스트하고 기록한 실행 결과입니다.
+
+### 1. 아이디 중복 확인 (5주차)
+
+클라이언트에서 입력한 아이디를 서버로 전달하고, MySQL에 등록된 사용자 정보와 비교해 중복 여부를 표시하도록 구현했습니다.
+
+**이미 사용 중인 아이디**
+
+![아이디 중복 확인](screenshots/id-check-duplicate.png)
+
+**사용 가능한 아이디**
+
+![아이디 사용 가능](screenshots/id-check-available.png)
+
+### 2. 날씨 API 연동 (7주차)
+
+Open-Meteo API에서 기온, 습도, 날씨 상태를 받아 Java 콘솔에 표시했습니다.
+
+![날씨 API 조회](screenshots/weather-api-success.png)
+
+### 3. 그룹 채팅방 생성 및 목록 조회 (8주차)
+
+여러 회원이 참여하는 그룹 채팅방을 생성하고, 데이터베이스에 저장된 채팅방 목록과 참여 인원을 조회했습니다.
+
+![그룹 채팅방 생성](screenshots/group-room-created.png)
+
+![채팅방 목록 조회](screenshots/room-list.png)
+
+### 4. 채팅방 입장과 귓속말 (8주차)
+
+채팅방 입장 명령어와 특정 회원에게만 메시지를 보내는 귓속말 기능을 구현하고 테스트했습니다.
+
+![채팅방 입장 및 귓속말](screenshots/room-join-whisper.png)
+
+### 5. 사용자 초대 및 수락 (8주차)
+
+기존 채팅방 참여자가 다른 회원을 초대하고, 초대받은 회원이 수락해 채팅방에 참여하도록 구현했습니다.
+
+**사용자 초대**
+
+![초대 전송](screenshots/invite-sent.png)
+
+**초대 수락**
+
+![초대 수락](screenshots/invite-accepted.png)
+
+### 6. 채팅방 참여 인원 변경 확인 (8주차)
+
+초대 수락 후 그룹 채팅방의 참여 인원이 3명에서 4명으로 증가한 것을 확인했습니다.
+
+![참여 인원 4명](screenshots/room-member-count-four.png)
+
+MySQL의 room_members 테이블에서도 4명의 참여 정보가 저장된 것을 확인했습니다.
+
+![MySQL 참여자 조회](screenshots/mysql-room-members-four.png)
+
+### 7. 데이터베이스 설계 확장 (8주차)
+
+기존 users 테이블에 채팅방 정보와 참여자 정보를 관리하는 chat_rooms, room_members 테이블을 추가했습니다.
+
+![8주차 ERD](docs/erd-week08.png)
 
 ## 5. 주차별 개발 과정
 
