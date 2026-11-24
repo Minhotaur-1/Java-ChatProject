@@ -95,7 +95,7 @@
 
 11주차의 `chat_images.room_id`·`sender_id`는 애플리케이션에서 참조 관계로 사용하지만, **11주차 SQL에서는 실제 FOREIGN KEY 제약조건을 선언하지 않았습니다.** ERD의 관계선과 실제 DB 제약조건은 구분합니다.
 
-![11주차 ERD](docs/erd-week11.png)
+
 
 ## 추가 학습·확장 기능
 
