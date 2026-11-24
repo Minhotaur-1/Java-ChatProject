@@ -5,6 +5,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Scanner;
 
@@ -119,6 +120,99 @@ public class ChatRoomDAO {
             e.printStackTrace();
         }
 
+        return -1;
+    }
+
+    // 그룹 채팅방 생성: 초대한 회원 포함, 모든 DB 작업을 한 트랜잭션으로 처리
+    public int createGroupRoom(String creatorId, String roomName,
+            String[] otherIds) {
+
+        if (roomName == null || roomName.trim().isEmpty()
+                || roomName.trim().length() > 100
+                || otherIds == null || otherIds.length == 0
+                || otherIds.length > 20) {
+            System.out.println("방 이름 또는 참여 회원 수를 확인해주세요.");
+            return -1;
+        }
+
+        java.util.Set<String> members = new java.util.LinkedHashSet<>();
+        members.add(creatorId);
+
+        for (String rawId : otherIds) {
+            String userId = rawId.trim();
+            if (!userId.matches("[A-Za-z0-9_]{3,30}")
+                    || userId.equals(creatorId)
+                    || !members.add(userId)) {
+                System.out.println("참여자 ID가 잘못되었거나 중복되었습니다: " + userId);
+                return -1;
+            }
+        }
+
+        String checkUserSql = "SELECT 1 FROM users WHERE id = ?";
+        String insertRoomSql = "INSERT INTO chat_rooms "
+                + "(room_name, room_type, created_by) "
+                + "VALUES (?, 'GROUP', ?)";
+        String insertMemberSql = "INSERT INTO room_members "
+                + "(room_id, user_id) VALUES (?, ?)";
+
+        try (Connection conn = DriverManager.getConnection(
+                URL, DB_USER, DB_PASSWORD)) {
+            conn.setAutoCommit(false);
+
+            try {
+                // 모든 가입 아이디가 실제 존재하는지 확인
+                try (PreparedStatement check =
+                        conn.prepareStatement(checkUserSql)) {
+                    for (String memberId : members) {
+                        check.setString(1, memberId);
+                        try (ResultSet rs = check.executeQuery()) {
+                            if (!rs.next()) {
+                                System.out.println("존재하지 않는 회원: " + memberId);
+                                conn.rollback();
+                                return -1;
+                            }
+                        }
+                    }
+                }
+
+                int roomId;
+                try (PreparedStatement insert = conn.prepareStatement(
+                        insertRoomSql, Statement.RETURN_GENERATED_KEYS)) {
+                    insert.setString(1, roomName.trim());
+                    insert.setString(2, creatorId);
+                    insert.executeUpdate();
+
+                    try (ResultSet rs = insert.getGeneratedKeys()) {
+                        if (!rs.next()) {
+                            throw new SQLException("방 번호를 생성하지 못했습니다.");
+                        }
+                        roomId = rs.getInt(1);
+                    }
+                }
+
+                try (PreparedStatement insert =
+                        conn.prepareStatement(insertMemberSql)) {
+                    for (String memberId : members) {
+                        insert.setInt(1, roomId);
+                        insert.setString(2, memberId);
+                        insert.executeUpdate();
+                    }
+                }
+
+                conn.commit();
+                System.out.println("그룹 채팅방 생성 성공: " + roomId
+                        + "번 / " + members.size() + "명");
+                return roomId;
+
+            } catch (Exception e) {
+                conn.rollback();
+                System.out.println("그룹 채팅방 생성 실패!");
+                e.printStackTrace();
+            }
+        } catch (Exception e) {
+            System.out.println("DB 연결 오류!");
+            e.printStackTrace();
+        }
         return -1;
     }
 

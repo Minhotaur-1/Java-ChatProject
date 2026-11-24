@@ -1,4 +1,3 @@
-
 package ChatProject;
 
 import java.io.*;
@@ -191,6 +190,44 @@ public class ChatLobbyServer {
         }
     }
 
+    // 10주차: 방 입장 시 최근 30건의 채팅 기록을 전달
+    public static void sendRecentHistory(ClientInfo client, int roomId) {
+        if (!isRoomMember(roomId, client.id)) {
+            client.send("ERROR|이전 대화를 조회할 권한이 없습니다.");
+            return;
+        }
+
+        try {
+            java.util.List<ChatMessageDAO.ChatRecord> rows =
+                    new ChatMessageDAO().loadRecentMessages(roomId, 30);
+            java.util.Map<Long, ReplyMessageDAO.ReplyInfo> references =
+                    new ReplyMessageDAO().recentReplies(roomId, 30);
+
+            // 전송 중 다른 서버 메시지가 섞이지 않도록 묶어서 출력
+            synchronized (client.out) {
+                client.out.println("HISTORY_BEGIN|" + roomId + "|" + rows.size());
+                for (ChatMessageDAO.ChatRecord record : rows) {
+                    ReplyMessageDAO.ReplyInfo reference = references.get(record.messageId);
+                    if (reference == null) {
+                        client.out.println("HISTORY|" + record.messageId + "|"
+                                + record.roomId + "|" + record.senderId + "|"
+                                + record.sentAt + "|" + record.content);
+                    } else {
+                        client.out.println("HISTORY_REPLY|" + record.messageId + "|"
+                                + record.roomId + "|" + record.senderId + "|"
+                                + record.sentAt + "|" + reference.originalMessageId + "|"
+                                + reference.originalSender + "|" + reference.previewBase64()
+                                + "|" + record.content);
+                    }
+                }
+                client.out.println("HISTORY_END|" + roomId);
+            }
+        } catch (SQLException e) {
+            client.send("ERROR|이전 채팅 기록을 불러오지 못했습니다.");
+            e.printStackTrace();
+        }
+    }
+
     // 채팅방 변경 확인
     public static String getRoomVersion() {
 
@@ -281,11 +318,21 @@ public class ChatLobbyServer {
             return;
         }
 
+        // 서버에서 금칙어를 치환한 후 상대방에게 전송
+        String filteredText;
+        try {
+            filteredText = ForbiddenWordFilter.filter(text);
+        } catch (SQLException e) {
+            sender.send("ERROR|금칙어 조회 오류로 귓속말을 보내지 못했습니다.");
+            e.printStackTrace();
+            return;
+        }
+
         target.send("WHISPER_FROM|"
-                + sender.id + "|" + text);
+                + sender.id + "|" + filteredText);
 
         sender.send("WHISPER_SENT|"
-                + targetId + "|" + text);
+                + targetId + "|" + filteredText);
     }
 
     // 초대 가능한 사용자 목록
@@ -416,6 +463,7 @@ public class ChatLobbyServer {
             target.roomId = roomId;
 
             target.send("INVITE_ACCEPTED|" + roomId);
+            sendRecentHistory(target, roomId);
 
             inviter.send("INVITE_RESULT|"
                     + target.id + "|ACCEPTED");
@@ -516,10 +564,105 @@ public class ChatLobbyServer {
                     continue;
                 }
 
+                // 11주차: 회원이 채팅방에서 보내는 파일의 바이너리 조각 중계
+                // 디스크 저장 없이 같은 방에 접속한 상대 회원에게만 전송.
+                if (message.startsWith("FILE_")) {
+                    FileTransferRelay.handle(currentUser, message, onlineUsers);
+                    continue;
+                }
+
+                // 11주차: 회원이 채팅방에서 보내는 파일의 바이너리 조각 중계
+                // 디스크 저장 없이 같은 방에 접속한 상대 회원에게만 전송.
+                if (message.startsWith("FILE_")) {
+                    FileTransferRelay.handle(currentUser, message, onlineUsers);
+                    continue;
+                }
+
+                // 2인 틱택토: 대전 신청/수락/거절/착수/종료
+                if (message.startsWith("TTT_INVITE|")) {
+                    TicTacToeService.invite(currentUser, message.substring(11).trim(), onlineUsers);
+                    continue;
+                }
+                if (message.startsWith("TTT_ACCEPT|")) {
+                    TicTacToeService.accept(currentUser, message.substring(11).trim(), onlineUsers);
+                    continue;
+                }
+                if (message.startsWith("TTT_DECLINE|")) {
+                    TicTacToeService.decline(currentUser, message.substring(12).trim(), onlineUsers);
+                    continue;
+                }
+                if (message.startsWith("TTT_MOVE|")) {
+                    String[] data = message.split("\\|", 3);
+                    try {
+                        if (data.length != 3) throw new NumberFormatException();
+                        TicTacToeService.move(currentUser, Long.parseLong(data[1]),
+                                Integer.parseInt(data[2]), onlineUsers);
+                    } catch (NumberFormatException e) {
+                        currentUser.send("TTT_ERROR|착수 정보가 올바르지 않습니다.");
+                    }
+                    continue;
+                }
+                if (message.startsWith("TTT_LEAVE|")) {
+                    try {
+                        TicTacToeService.leave(currentUser,
+                                Long.parseLong(message.substring(10)), onlineUsers);
+                    } catch (NumberFormatException ignored) { }
+                    continue;
+                }
+
                 // 채팅방 목록
                 if (message.equals("ROOMS")) {
 
                     sendRoomList(currentUser);
+                }
+
+                // 9주차: 1:1 채팅방 만들기
+                else if (message.startsWith("CREATE_DIRECT|")) {
+                    String targetId = message.substring("CREATE_DIRECT|".length()).trim();
+                    if (!targetId.matches("[A-Za-z0-9_]{3,30}")) {
+                        currentUser.send("ERROR|상대방 아이디를 확인해주세요.");
+                        continue;
+                    }
+
+                    int newRoomId = new ChatRoomDAO()
+                            .createDirectRoom(currentUser.id, targetId);
+                    if (newRoomId == -1) {
+                        currentUser.send("ERROR|1:1 방 생성 실패: 상대 회원을 확인해주세요.");
+                    } else {
+                        FileTransferRelay.onRoomChange(currentUser);
+                        FileTransferRelay.onRoomChange(currentUser);
+                        currentUser.roomId = newRoomId;
+                        currentUser.send("CREATE_OK|" + newRoomId + "|DIRECT");
+                        currentUser.send("JOIN_OK|" + newRoomId);
+                        sendRecentHistory(currentUser, newRoomId);
+                        sendRoomList(currentUser);
+                    }
+                }
+
+                // 9주차: 그룹 채팅방 만들기. 형식: CREATE_GROUP|방이름|id1,id2
+                else if (message.startsWith("CREATE_GROUP|")) {
+                    String[] data = message.split("\\|", 3);
+                    if (data.length != 3 || data[1].trim().isEmpty()
+                            || data[1].trim().length() > 100
+                            || data[2].trim().isEmpty()) {
+                        currentUser.send("ERROR|그룹 방 형식: 방이름과 참여자 아이디를 확인해주세요.");
+                        continue;
+                    }
+
+                    String[] memberIds = data[2].split(",", -1);
+                    int newRoomId = new ChatRoomDAO().createGroupRoom(
+                            currentUser.id, data[1].trim(), memberIds);
+                    if (newRoomId == -1) {
+                        currentUser.send("ERROR|그룹 방 생성 실패: 회원 ID와 중복을 확인해주세요.");
+                    } else {
+                        FileTransferRelay.onRoomChange(currentUser);
+                        FileTransferRelay.onRoomChange(currentUser);
+                        currentUser.roomId = newRoomId;
+                        currentUser.send("CREATE_OK|" + newRoomId + "|GROUP");
+                        currentUser.send("JOIN_OK|" + newRoomId);
+                        sendRecentHistory(currentUser, newRoomId);
+                        sendRoomList(currentUser);
+                    }
                 }
 
                 // 채팅방 입장
@@ -535,12 +678,164 @@ public class ChatLobbyServer {
                             continue;
                         }
 
+                        if (currentUser.roomId != roomId) FileTransferRelay.onRoomChange(currentUser);
+                        if (currentUser.roomId != roomId) FileTransferRelay.onRoomChange(currentUser);
                         currentUser.roomId = roomId;
                         currentUser.send("JOIN_OK|" + roomId);
+                        sendRecentHistory(currentUser, roomId);
 
                     } catch (NumberFormatException e) {
                         currentUser.send(
                                 "ERROR|채팅방 번호를 확인해주세요.");
+                    }
+                }
+
+                // PNG/GIF 이모티콘: 서버가 허용한 ID만 DB에 저장합니다.
+                // 이미지 파일은 두 클라이언트에 동일하게 포함되므로 파일 경로를 보내지 않습니다.
+                else if (message.startsWith("EMOTICON|")) {
+                    String emoticonId = message.substring("EMOTICON|".length()).trim();
+                    int roomId = currentUser.roomId;
+                    if (roomId == -1 || !isRoomMember(roomId, currentUser.id)) {
+                        currentUser.send("ERROR|채팅방에 입장한 후 이모티콘을 보내주세요.");
+                    } else if (!EmoticonCatalog.isAllowed(emoticonId)) {
+                        currentUser.send("ERROR|지원하지 않는 이모티콘입니다.");
+                    } else {
+                        try {
+                            String content = EmoticonCatalog.toMessage(emoticonId);
+                            long messageId = new ChatMessageDAO()
+                                    .saveMessage(roomId, currentUser.id, content);
+                            String delivery = "CHAT_FROM|" + messageId + "|"
+                                    + roomId + "|" + currentUser.id + "|" + content;
+                            for (ClientInfo target : onlineUsers.values()) {
+                                if (target.roomId == roomId
+                                        && isRoomMember(roomId, target.id)) {
+                                    target.send(delivery);
+                                }
+                            }
+                        } catch (SQLException e) {
+                            currentUser.send("ERROR|이모티콘 DB 저장에 실패했습니다.");
+                            e.printStackTrace();
+                        }
+                    }
+                }
+
+                // 10주차: 일반 채팅을 DB에 저장한 뒤 같은 방에 전송
+                else if (message.startsWith("CHAT|")) {
+                    String content = message.substring(5).trim();
+                    int roomId = currentUser.roomId;
+
+                    if (roomId == -1 || !isRoomMember(roomId, currentUser.id)) {
+                        currentUser.send("ERROR|먼저 참여 중인 채팅방에 입장해주세요.");
+                    } else if (content.isEmpty() || content.length() > 1000) {
+                        currentUser.send("ERROR|메시지는 1~1000자로 입력해주세요.");
+                    } else {
+                        try {
+                            // 금칙어를 서버에서 먼저 치환하고, 치환된 내용만 DB에 저장
+                            String filteredContent = ForbiddenWordFilter.filter(content);
+
+                            // 실제 방 참여자의 아이디/닉네임과 멘션을 비교
+                            java.util.Set<String> mentionedIds =
+                                    MentionService.findMentionedUserIds(roomId, filteredContent);
+
+                            // DB 저장 성공 시에만 채팅방에 메시지 전달
+                            long messageId = new ChatMessageDAO()
+                                    .saveMessage(roomId, currentUser.id, filteredContent);
+
+                            String delivery = "CHAT_FROM|" + messageId + "|"
+                                    + roomId + "|" + currentUser.id + "|" + filteredContent;
+
+                            for (ClientInfo target : onlineUsers.values()) {
+                                if (target.roomId == roomId
+                                        && isRoomMember(roomId, target.id)) {
+                                    target.send(delivery);
+                                    // 같은 메시지를 받은 뒤 해당 수신자에게만 강조 알림
+                                    if (!target.id.equals(currentUser.id)
+                                            && mentionedIds.contains(target.id)) {
+                                        target.send("MENTION_NOTICE|" + roomId + "|"
+                                                + messageId + "|" + currentUser.id);
+                                    }
+                                }
+                            }
+                        } catch (SQLException e) {
+                            currentUser.send("ERROR|금칙어 조회 또는 채팅 메시지 저장에 실패했습니다.");
+                            e.printStackTrace();
+                        }
+                    }
+                }
+
+                // 새 기능: 선택한 원본 메시지에 답장 (서버에서 방 권한/원본 관계 검사)
+                else if (message.startsWith("REPLY|")) {
+                    String[] parts = message.split("\\|", 3);
+                    int roomId = currentUser.roomId;
+                    if (roomId == -1 || !isRoomMember(roomId, currentUser.id)) {
+                        currentUser.send("ERROR|먼저 참여 중인 채팅방에 입장해주세요.");
+                    } else if (parts.length != 3) {
+                        currentUser.send("ERROR|답장 형식이 올바르지 않습니다.");
+                    } else {
+                        try {
+                            long originalId = Long.parseLong(parts[1]);
+                            String content = parts[2].trim();
+                            if (content.isEmpty() || content.length() > 1000) {
+                                currentUser.send("ERROR|답장은 1~1000자로 입력해주세요.");
+                                continue;
+                            }
+                            String filtered = ForbiddenWordFilter.filter(content);
+                            java.util.Set<String> mentionedIds =
+                                    MentionService.findMentionedUserIds(roomId, filtered);
+                            ReplyMessageDAO.SavedReply reply = new ReplyMessageDAO()
+                                    .saveReply(roomId, currentUser.id, originalId, filtered);
+                            String delivery = "REPLY_FROM|" + reply.newMessageId + "|"
+                                    + roomId + "|" + currentUser.id + "|"
+                                    + reply.reference.originalMessageId + "|"
+                                    + reply.reference.originalSender + "|"
+                                    + reply.reference.previewBase64() + "|" + filtered;
+                            for (ClientInfo target : onlineUsers.values()) {
+                                if (target.roomId == roomId && isRoomMember(roomId, target.id)) {
+                                    target.send(delivery);
+                                    if (!target.id.equals(currentUser.id)
+                                            && mentionedIds.contains(target.id)) {
+                                        target.send("MENTION_NOTICE|" + roomId + "|"
+                                                + reply.newMessageId + "|" + currentUser.id);
+                                    }
+                                }
+                            }
+                        } catch (NumberFormatException e) {
+                            currentUser.send("ERROR|답장할 메시지 번호가 올바르지 않습니다.");
+                        } catch (SQLException e) {
+                            currentUser.send("ERROR|답장 저장에 실패했습니다. SQL 컬럼과 서버 로그를 확인해주세요.");
+                            e.printStackTrace();
+                        }
+                    }
+                }
+
+                // 10주차: 현재 입장한 채팅방에서 키워드 포함 메시지 검색
+                else if (message.startsWith("SEARCH|")) {
+                    String keyword = message.substring("SEARCH|".length()).trim();
+                    int roomId = currentUser.roomId;
+
+                    if (roomId == -1 || !isRoomMember(roomId, currentUser.id)) {
+                        currentUser.send("ERROR|검색할 채팅방에 먼저 입장해주세요.");
+                    } else if (keyword.isEmpty() || keyword.length() > 100) {
+                        currentUser.send("ERROR|검색어는 1~100자로 입력해주세요.");
+                    } else {
+                        try {
+                            java.util.List<ChatMessageDAO.ChatRecord> matches =
+                                    new ChatMessageDAO().searchMessages(roomId, keyword, 30);
+                            synchronized (currentUser.out) {
+                                currentUser.out.println("SEARCH_BEGIN|" + roomId
+                                        + "|" + matches.size());
+                                for (ChatMessageDAO.ChatRecord record : matches) {
+                                    currentUser.out.println("SEARCH_RESULT|"
+                                            + record.messageId + "|" + record.roomId
+                                            + "|" + record.senderId + "|"
+                                            + record.sentAt + "|" + record.content);
+                                }
+                                currentUser.out.println("SEARCH_END|" + roomId);
+                            }
+                        } catch (SQLException e) {
+                            currentUser.send("ERROR|채팅 검색에 실패했습니다.");
+                            e.printStackTrace();
+                        }
                     }
                 }
 
@@ -556,6 +851,15 @@ public class ChatLobbyServer {
                         currentUser.send("ERROR|귓속말 형식 오류");
                     }
                 }
+
+                else if (message.startsWith("IMAGE|")) {
+
+                	ChatImageRelay.sendImage(
+                			currentUser,
+                			message.substring(6),
+                			onlineUsers);
+                }
+
 
                 // 초대 가능 회원 목록
                 else if (message.equals("INVITE_LIST")) {
@@ -612,6 +916,12 @@ public class ChatLobbyServer {
 
             if (currentUser != null) {
 
+                // 송신자 연결 종료 시 상대방의 미완료 파일 임시저장을 폐기하도록 통지
+                FileTransferRelay.onDisconnect(currentUser);
+                // 송신자 연결 종료 시 상대방의 미완료 파일 임시저장을 폐기하도록 통지
+                FileTransferRelay.onDisconnect(currentUser);
+                // 틱택토 진행 중 연결 종료 시 상대방에게 알림
+                TicTacToeService.onDisconnect(currentUser, onlineUsers);
                 invitations.remove(currentUser.id);
                 onlineUsers.remove(currentUser.id, currentUser);
 

@@ -1,4 +1,3 @@
-
 package ChatProject;
 
 import java.sql.Connection;
@@ -73,8 +72,11 @@ public class FindIdTest {
     }
 
     public static void main(String[] args) {
+        run(new Scanner(System.in));
+    }
 
-        Scanner sc = new Scanner(System.in);
+    // 9주차 통합: 호출한 시작 메뉴의 Scanner를 그대로 사용
+    public static void run(Scanner sc) {
 
         System.out.println("===== 아이디 찾기 =====");
 

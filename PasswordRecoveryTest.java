@@ -17,8 +17,11 @@ public class PasswordRecoveryTest {
             
 
     public static void main(String[] args) {
+        run(new Scanner(System.in));
+    }
 
-        Scanner sc = new Scanner(System.in);
+    // 9주차 통합: 호출한 시작 메뉴의 Scanner를 그대로 사용
+    public static void run(Scanner sc) {
 
         System.out.println("===== 비밀번호 찾기 =====");
 
@@ -108,8 +111,6 @@ public class PasswordRecoveryTest {
 
         } catch (Exception e) {
             e.printStackTrace();
-        } finally {
-            sc.close();
         }
     }
 }
